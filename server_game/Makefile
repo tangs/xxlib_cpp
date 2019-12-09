@@ -87,7 +87,7 @@ rm -f $(D_DIR)/$@.$$$$
 endef
 
 server: makeDirs $(prevFiles) $(obj)
-	$(CC) -Wall $(INC) $(CFLAGS) -o $(BIN_DIR)/catchfish.out \
+	$(CC) -Wall $(INC) $(CFLAGS) -o $(BIN_DIR)/game.out \
 	$(OBJ_DIR)/ikcp.o \
 	$(OBJ_DIR)/main.o $(LIBS)
 	-cp -rf ../gens/output/cfg.bin $(DEST_DIR)
