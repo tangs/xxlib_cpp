@@ -137,8 +137,8 @@ using CatchFish_s = std::shared_ptr<CatchFish>;
 /**************************************************************************************************/
 
 #include "xx_random.hpp"
-#include "CatchFish.hpp"
 #include "PKG_class.hpp"
+#include "CatchFish.hpp"
 
 #ifndef CC_TARGET_PLATFORM
 #include "Peer.hpp"

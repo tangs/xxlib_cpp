@@ -1,7 +1,7 @@
 inline int Peer::ReceiveRequest(int const& serial, xx::Object_s&& msg) noexcept {
 	switch (msg->GetTypeId()) {
 	case xx::TypeId_v<PKG::Generic::Ping>: {
-		// ÖØÖÃ³¬Ê±
+		// é‡ç½®è¶…æ—¶
 		if (auto && p = player_w.lock()) {
 			p->ResetTimeoutFrameNumber();
 		}
@@ -9,7 +9,7 @@ inline int Peer::ReceiveRequest(int const& serial, xx::Object_s&& msg) noexcept 
 			ResetTimeoutMS(10000);
 		}
 
-		// Ğ¯´øÊÕµ½µÄÊı¾İ»Ø·¢
+		// æºå¸¦æ”¶åˆ°çš„æ•°æ®å›å‘
 		pkgPong->ticks = xx::As<PKG::Generic::Ping>(msg)->ticks;
 		auto r = SendResponse(serial, pkgPong);
 		Flush();
@@ -23,10 +23,10 @@ inline int Peer::ReceiveRequest(int const& serial, xx::Object_s&& msg) noexcept 
 
 inline int Peer::ReceivePush(xx::Object_s&& msg) noexcept {
 
-	// ÓĞÍæ¼Ò bind
+	// æœ‰ç©å®¶ bind
 	if (auto && player = player_w.lock()) {
-		// ÒÑ°ó¶¨Á¬½Ó
-		// ½«³õ²½ÅĞ¶¨ºÏ·¨µÄÏûÏ¢·ÅÈëÈİÆ÷, ´ıµ½ÊÊµ±Ê±»ú¶Á³öÊ¹ÓÃ, Ä£ÄâÊäÈë
+		// å·²ç»‘å®šè¿æ¥
+		// å°†åˆæ­¥åˆ¤å®šåˆæ³•çš„æ¶ˆæ¯æ”¾å…¥å®¹å™¨, å¾…åˆ°é€‚å½“æ—¶æœºè¯»å‡ºä½¿ç”¨, æ¨¡æ‹Ÿè¾“å…¥
 		auto&& typeId = msg->GetTypeId();
 		if (typeId != xx::TypeId_v<PKG::Client_CatchFish::Bet>
 			&& typeId != xx::TypeId_v<PKG::Client_CatchFish::Fire>
@@ -37,52 +37,52 @@ inline int Peer::ReceivePush(xx::Object_s&& msg) noexcept {
 		player->recvs.push_back(msg);
 		return 0;
 	}
-	// Ã»Íæ¼Ò bind
+	// æ²¡ç©å®¶ bind
 	else {
 		if (!isFirstPackage) return -1;
 		isFirstPackage = false;
 
-		// ÄäÃûÁ¬½Ó. Ö»½ÓÊÜ Enter
+		// åŒ¿åè¿æ¥. åªæ¥å— Enter
 		switch (msg->GetTypeId()) {
 		case xx::TypeId_v<PKG::Client_CatchFish::Enter>: {
 			auto&& o = xx::As<PKG::Client_CatchFish::Enter>(msg);
 
-			// ÒıÓÃµ½¹«¹²ÅäÖÃ·½±ãÊ¹ÓÃ
+			// å¼•ç”¨åˆ°å…¬å…±é…ç½®æ–¹ä¾¿ä½¿ç”¨
 			auto&& cfg = *catchFish->cfg;
 
-			// ÅĞ¶ÏÒª½øÈëÄÄ¸ö scene (µ±Ç°¾ÍÒ»¸ö, ÂÔ )
+			// åˆ¤æ–­è¦è¿›å…¥å“ªä¸ª scene (å½“å‰å°±ä¸€ä¸ª, ç•¥ )
 			auto&& scene = *catchFish->scene;
 
-			// Èç¹ûÓĞ´«ÈëÍæ¼Ò id, ¾ÍÊÔ×Å¶¨Î», ×ß¶ÏÏßÖØÁ¬Âß¼­
+			// å¦‚æœæœ‰ä¼ å…¥ç©å®¶ id, å°±è¯•ç€å®šä½, èµ°æ–­çº¿é‡è¿é€»è¾‘
 			while (o->token) {
-				// ÓÃ token ²éÕÒÍæ¼Ò
+				// ç”¨ token æŸ¥æ‰¾ç©å®¶
 				for(auto&& p : catchFish->players) {
 					if (p->token == *o->token) {
 						assert(p->peer != shared_from_this());
-						// ÌßµôÔ­ÓĞÁ¬½Ó( ¿ÉÄÜĞÔ: ¿Í»§¶ËºÜ¾ÃÃ»ÊÕµ½ÍÆËÍ, ×Ô¼º redial, ¶ø server ²¢Ã»·¢ÏÖ¶ÏÏß )
+						// è¸¢æ‰åŸæœ‰è¿æ¥( å¯èƒ½æ€§: å®¢æˆ·ç«¯å¾ˆä¹…æ²¡æ”¶åˆ°æ¨é€, è‡ªå·± redial, è€Œ server å¹¶æ²¡å‘ç°æ–­çº¿ )
 						p->Kick(GetIP(), " reconnect");
-						// Íæ¼ÒÓëÁ¬½Ó°ó¶¨
+						// ç©å®¶ä¸è¿æ¥ç»‘å®š
 						player_w = p;
 						p->peer = xx::As<Peer>(shared_from_this());
-						// ·ÅÈë±¾Ö¡½øÈëÓÎÏ·µÄÁĞ±í, ÒÔ±ãÏÂ·¢ÍêÕûÍ¬²½
+						// æ”¾å…¥æœ¬å¸§è¿›å…¥æ¸¸æˆçš„åˆ—è¡¨, ä»¥ä¾¿ä¸‹å‘å®Œæ•´åŒæ­¥
 						scene.frameEnters.Add(&*p);
-						// ÉèÖÃ³¬Ê±
+						// è®¾ç½®è¶…æ—¶
 						p->ResetTimeoutFrameNumber();
-						// ·µ»Ø³É¹¦
+						// è¿”å›æˆåŠŸ
 						return 0;
 					}
 				}
 				break;
 			}
 
-			// ¿´¿´ÓĞÃ»ÓĞÎ»ÖÃ. Èç¹ûÃ»ÓĞ¾ÍÖ±½Ó¶Ï¿ª
+			// çœ‹çœ‹æœ‰æ²¡æœ‰ä½ç½®. å¦‚æœæ²¡æœ‰å°±ç›´æ¥æ–­å¼€
 			PKG::CatchFish::Sits sit;
 			if (!scene.freeSits->TryPop(sit)) {
 				xx::CoutTN("no more free sit: ", msg);
 				return -2;
 			}
 
-			// ¹¹½¨Íæ¼ÒÉÏÏÂÎÄ( Ä£ÄâÒÑ´Ódb¶Áµ½ÁËÊı¾İ )
+			// æ„å»ºç©å®¶ä¸Šä¸‹æ–‡( æ¨¡æ‹Ÿå·²ä»dbè¯»åˆ°äº†æ•°æ® )
 			auto&& player = xx::Make<PKG::CatchFish::Player>();
 			xx::MakeTo(player->cannons);
 			player->scene = &scene;
@@ -99,7 +99,7 @@ inline int Peer::ReceivePush(xx::Object_s&& msg) noexcept {
 			player->noMoney = false;
 			xx::MakeTo(player->weapons);
 
-			// ¹¹½¨³õÊ¼ÅÚÌ¨
+			// æ„å»ºåˆå§‹ç‚®å°
 			auto&& cannonCfgId = 0;
 			switch (cannonCfgId) {
 			case 0: {
@@ -125,16 +125,16 @@ inline int Peer::ReceivePush(xx::Object_s&& msg) noexcept {
 				return -3;
 			}
 
-			// ½«Íæ¼Ò·ÅÈëÏàÓ¦ÈİÆ÷
+			// å°†ç©å®¶æ”¾å…¥ç›¸åº”å®¹å™¨
 			catchFish->players.Add(player);
 			scene.players->Add(player);
 			scene.frameEnters.Add(&*player);
 
-			// Íæ¼ÒÓëÁ¬½Ó°ó¶¨
+			// ç©å®¶ä¸è¿æ¥ç»‘å®š
 			player_w = player;
 			player->peer = xx::As<Peer>(shared_from_this());
 
-			// ¹¹½¨Íæ¼Ò½øÈëÍ¨Öª²¢·ÅÈëÖ¡Í¬²½ÏÂ·¢ÊÂ¼ş¼¯ºÏ´ı·¢
+			// æ„å»ºç©å®¶è¿›å…¥é€šçŸ¥å¹¶æ”¾å…¥å¸§åŒæ­¥ä¸‹å‘äº‹ä»¶é›†åˆå¾…å‘
 			{
 				auto&& enter = xx::Make<PKG::CatchFish::Events::Enter>();
 				enter->avatar_id = player->avatar_id;
@@ -148,10 +148,10 @@ inline int Peer::ReceivePush(xx::Object_s&& msg) noexcept {
 				scene.frameEvents->events->Add(enter);
 			}
 
-			// ÉèÖÃ³¬Ê±
+			// è®¾ç½®è¶…æ—¶
 			player->ResetTimeoutFrameNumber();
 
-			// ³É¹¦ÍË³ö
+			// æˆåŠŸé€€å‡º
 			xx::CoutTN(GetIP(), " player enter. ", player);
 			break;
 		}
