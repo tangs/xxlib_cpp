@@ -168,6 +168,20 @@ namespace TemplateLibrary
     }
 
     /// <summary>
+    /// CPP client 生成物之命名空间过滤( 白名单 ), 用到 生成配置 接口上
+    /// </summary>
+    [System.AttributeUsage(System.AttributeTargets.Interface, AllowMultiple = true)]
+    public class JsFilter : System.Attribute
+    {
+        public JsFilter(string v) { value = v; }
+        public string value;
+        public override string ToString()
+        {
+            return value;
+        }
+    }
+
+    /// <summary>
     /// 备注。可用于类/枚举/函数 及其 成员
     /// </summary>
     public class Desc : System.Attribute
