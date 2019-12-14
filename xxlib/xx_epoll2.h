@@ -15,6 +15,7 @@
 #include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <termios.h>
 
 #include "ikcp.h"
 #include "xx_bbuffer.h"
@@ -110,19 +111,72 @@ namespace xx::Epoll {
 
 		Ref() = default;
 		Ref(Ref const&) = default;
+		Ref(Ref&&) = default;
 		Ref& operator=(Ref const&) = default;
-		Ref(Ref &&) = default;
-		Ref& operator=(Ref &&) = default;
+		Ref& operator=(Ref&&) = default;
+
+		template<typename U>
+		Ref& operator=(std::enable_if_t<std::is_base_of_v<T, U>, Ref<U>> const& o);
+		template<typename U>
+		Ref& operator=(std::enable_if_t<std::is_base_of_v<T, U>, Ref<U>>&& o);
+
+		template<typename U>
+		Ref<U> As() const;
 
 		operator bool() const;
 		T* operator->() const;
 		T* Lock() const;
-
-		template<typename U>
-		Ref<U> As() const;
+		template<typename U = T>
+		void Reset(U* const& ptr = nullptr);
 	};
 
+	template<typename A, typename B>
+	inline bool operator==(Ref<A> const& a, Ref<B> const& b) {
+		return a.Lock() == b.Lock();
+	}
+
+	template<typename A, typename B>
+	inline bool operator!=(Ref<A> const& a, Ref<B> const& b) {
+		return a.Lock() != b.Lock();
+	}
+
 	using Item_r = Ref<Item>;
+
+
+	/***********************************************************************************************************/
+	// CommandHandler
+	/***********************************************************************************************************/
+
+	// 处理键盘输入指令的专用类. 直接映射到 STDIN_FILENO ( fd == 0 )
+	struct CommandHandler : Item {
+		std::string row;
+		size_t cursor = 0;
+		virtual void OnEpollEvent(uint32_t const& e) override;
+		virtual ~CommandHandler();
+
+	protected:
+		// 解析 row 内容并调用 cmd 绑定 handler
+		void Exec();
+
+		// 同步显示光标右侧内容. print 右侧字串+' ' 并退格 sizeof(右侧字串)+1
+		void PrintCursorToEnd();
+
+		// 各种直接移动光标
+		void Right();
+		void Left();
+		void Backspace();
+		void Home();
+		void End();
+		void Del();
+		void PageUp();
+		void PageDown();
+		void Up();
+		void Down();
+
+		// 正常字符插入或追加
+		void Insert(char const& c);
+		void Append(char const& c);
+	};
 
 
 	/***********************************************************************************************************/
@@ -166,15 +220,6 @@ namespace xx::Epoll {
 		// 收数据用堆积容器
 		xx::List<char> recv;
 
-		// 是否正在发送( 是：不管 sendQueue 空不空，都不能 write, 只能塞 sendQueue )
-		bool writing = false;
-
-		// 待发送队列
-		xx::BufQueue sendQueue;
-
-		// 每 fd 每一次可写, 写入的长度限制( 希望能实现当大量数据下发时各个 socket 公平的占用带宽 )
-		size_t sendLenPerFrame = 65536;
-
 		// 读缓冲区内存扩容增量
 		size_t readBufLen = 65536;
 
@@ -209,6 +254,16 @@ namespace xx::Epoll {
 	/***********************************************************************************************************/
 
 	struct TcpPeer : Peer {
+
+		// 是否正在发送( 是：不管 sendQueue 空不空，都不能 write, 只能塞 sendQueue )
+		bool writing = false;
+
+		// 待发送队列
+		xx::BufQueue sendQueue;
+
+		// 每 fd 每一次可写, 写入的长度限制( 希望能实现当大量数据下发时各个 socket 公平的占用带宽 )
+		size_t sendLenPerFrame = 65536;
+
 		virtual void OnEpollEvent(uint32_t const& e) override;
 		virtual int Send(xx::Buf&& data) override;
 		virtual int Send(char const* const& buf, size_t const& len) override;
@@ -227,11 +282,12 @@ namespace xx::Epoll {
 	/***********************************************************************************************************/
 
 	struct TcpListener : Item {
+		typedef TcpPeer PeerType;
 		// 提供创建 peer 对象的实现
 		virtual TcpPeer_u OnCreatePeer();
 
 		// 提供为 peer 绑定事件的实现
-		inline virtual void OnAccept(TcpPeer_r peer) {}
+		inline virtual void OnAccept(TcpPeer_r const& peer) {}
 
 		// 调用 accept
 		virtual void OnEpollEvent(uint32_t const& e) override;
@@ -281,6 +337,8 @@ namespace xx::Epoll {
 	using KcpPeer_r = Ref<KcpPeer>;
 	using KcpPeer_u = std::unique_ptr<KcpPeer>;
 	struct KcpListener : UdpPeer {
+		typedef KcpPeer PeerType;
+
 		// 自增生成
 		uint32_t convId = 0;
 
@@ -385,19 +443,16 @@ namespace xx::Epoll {
 	};
 
 	struct Dialer : ItemTimeout {
-		// 要连的地址数组
-		std::vector<sockaddr_in6> addrs;
-
-		// 内部连接对象. 拨号完毕后会被清空
-		std::vector<Item_r> conns;
+		// 要连的地址数组. 带协议标记
+		std::vector<std::pair<sockaddr_in6, Protocol>> addrs;
 
 		// 向 addrs 追加地址. 如果地址转换错误将返回非 0
-		int AddAddress(std::string const& ip, int const& port);
+		int AddAddress(std::string const& ip, int const& port, Protocol const& protocol = Protocol::Both);
 
 		// 开始拨号。会遍历 addrs 为每个地址创建一个 ?cpConn 连接
 		// 保留先连接上的 socket fd, 创建 Peer 并触发 OnConnect 事件. 
 		// 如果超时，也触发 OnConnect，参数为 nullptr
-		int Dial(int const& timeoutFrames, Protocol const& protocol = Protocol::Both);
+		int Dial(int const& timeoutFrames);
 
 		// 返回是否正在拨号
 		bool Busy();
@@ -405,22 +460,25 @@ namespace xx::Epoll {
 		// 停止拨号 并清理 conns. 保留 addrs.
 		void Stop();
 
-		// 存个空值备用 以方便返回引用
-		Peer_r emptyPeer;
-
 		// 连接成功或超时后触发
 		virtual void OnConnect(Peer_r const& peer) = 0;
 
 		// 覆盖并提供创建 peer 对象的实现. 返回 nullptr 表示创建失败
-		virtual Peer_u OnCreatePeer(bool const& isKcp);
-
-		// 超时表明所有连接都没有连上. 触发 OnConnect( nullptr )
-		virtual void OnTimeout() override;
+		virtual Peer_u OnCreatePeer(Protocol const& protocol);
 
 		// Stop()
 		~Dialer();
 
+		// 存个空值备用 以方便返回引用
+		Peer_r emptyPeer;
+
+		// 内部连接对象. 拨号完毕后会被清空
+		std::vector<Item_r> conns;
+
+		// 超时表明所有连接都没有连上. 触发 OnConnect( nullptr )
+		virtual void OnTimeout() override;
 	protected:
+		// 按具体协议创建 Conn 对象
 		int NewTcpConn(sockaddr_in6 const& addr);
 		int NewKcpConn(sockaddr_in6 const& addr);
 	};
@@ -437,17 +495,34 @@ namespace xx::Epoll {
 		// fd 到 处理类* 的 映射
 		std::array<Item*, 40000> fdMappings;
 
+
+
 		// 通过 Dialer 产生的, owner 指向 KcpConn 的 client kcp peers
 		std::vector<KcpPeer*> kcps;
 
 		// 提供自增版本号 for kcp conn
 		uint32_t autoIncKcpSerial = 0;
 
+
+
 		// epoll_wait 事件存储
 		std::array<epoll_event, 4096> events;
 
 		// 存储的 epoll fd
 		int efd = -1;
+
+
+
+		// 时间轮. 只存指针引用, 不管理内存
+		std::vector<ItemTimeout*> wheel;
+
+		// 指向时间轮的游标
+		int cursor = 0;
+
+
+		/********************************************************/
+		// 下面这几个用户可以读
+
 
 		// 对于一些返回值非 int 的函数, 具体错误码将存放于此
 		int lastErrorNumber = 0;
@@ -458,12 +533,43 @@ namespace xx::Epoll {
 		// Run 时填充, 以便于局部获取并转换时间单位
 		double frameRate = 1;
 
-		// 只存指针引用, 不管理内存
-		std::vector<ItemTimeout*> wheel;
-		int cursor = 0;
+
+		/********************************************************/
+		// 下面这几个用户可以读写
+
+		// 执行标志位。如果要退出，修改它
+		bool running = true;
+
+		// for SendRequest( .... , 0 )
+		int64_t defaultRequestTimeoutMS = 15000;
+
+		// for recv safe check
+		uint32_t maxPackageLength = 1024 * 256;
+
+		// 公用反序列化 bb. 直接用 Reset 来替换内存使用. 
+		BBuffer recvBB;
+
+		// 公用序列化 bb
+		BBuffer sendBB;
+
+		// 公用序列化 bb( 智能指针版 )
+		BBuffer_s sharedBB = xx::Make<BBuffer>();
+
+		// 公用 buf( 已用于 STDIN 输入接收 )
+		std::array<char, 65536> buf;
+
+		// 公用 args( 已用于 cmdHandlers 传参 )
+		std::vector<std::string> args;
+
+		// 映射通过 stdin 进来的指令的处理函数. 去空格 去 tab 后第一个单词作为 key. 剩余部分作为 args
+		std::unordered_map<std::string, std::function<void(std::vector<std::string> const& args)>> cmdHandlers;
+
+		//
+		/********************************************************/
 
 
-		// 传入 2^n 的轮子长度
+
+		// 指定时间轮长度( 要求为 2^n )
 		Context(size_t const& wheelLen = 1 << 12);
 
 		virtual ~Context();
@@ -505,7 +611,10 @@ namespace xx::Epoll {
 		// 开始运行并尽量维持在指定帧率. 临时拖慢将补帧
 		int Run(double const& frameRate = 60.3);
 
-		// 创建 TCP 监听器	// todo: 支持填写ip, 支持传入复用 fd
+		// 创建指令处理器( 注意：因为是针对 STDIN fd == 0, 只能创建一份 )
+		int CreateCommandHandler(bool const& advanceMode = false);
+
+		// 创建 TCP 监听器
 		template<typename T = TcpListener, typename ...Args>
 		Ref<T> CreateTcpListener(int const& port, Args&&... args);
 
