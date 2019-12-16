@@ -1,291 +1,263 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
 
-
-public static class GenLUA_Class
+public class Info
 {
-    public static void Gen(Assembly asm, string outDir, string templateName, string md5, TemplateLibrary.Filter<TemplateLibrary.LuaFilter> filter)
+    public string defaultValue;
+    public string type;
+    public string jsTypeEnum;
+
+    public Info(string defaultValue, string type, string jsTypeEnum)
     {
-        var sb = new StringBuilder();
-
-        sb.Append(@"
-" + templateName + @"_PkgGenMd5_Value = '" + md5 + @"'
-");
-        var ts = asm._GetTypes();
-        var es = ts._GetEnums();
-        for (int i = 0; i < es.Count; ++i)
-        {
-            var e = es[i];
-            if (!filter.Contains(e)) continue;
-            var en = e._GetTypeDecl_Lua(templateName);
-            sb.Append(e._GetDesc()._GetComment_Lua(0) + @"
-" + en + @" = {");
-
-            var fs = e._GetEnumFields();
-            foreach (var f in fs)
-            {
-                sb.Append(f._GetDesc()._GetComment_Lua(4) + @"
-    " + f.Name + " = " + f._GetEnumValue(e) + ",");
-            }
-            sb.Length--;
-
-            // enum /
-            sb.Append(@"
-}");
-        }
-
-        // 遍历所有 type 及成员数据类型 生成  typeId. 0 不能占. string 占掉 1. BBuffer 占掉 2.
-
-        var typeIds = new TemplateLibrary.TypeIds(asm);
-        foreach (var kv in typeIds.types)
-        {
-            if (kv.Key == typeof(string) || kv.Key == typeof(TemplateLibrary.BBuffer)) continue;
-            var c = kv.Key;
-            if (!filter.Contains(c)) continue;
-            var typeId = (ushort)kv.Value;
-            var cn = c._GetTypeDecl_Lua(templateName);
-            var o = asm.CreateInstance(c.FullName);
-            var fs = c._GetFieldsConsts();
-
-            sb.Append(c._GetDesc()._GetComment_Lua(0) + @"
-" + cn + @" = {
-    typeName = """ + cn + @""",
-    typeId = " + typeId + @",
-    Create = function()
-        local o = {}
-        o.__proto = " + cn + @"
-        o.__index = o
-        o.__newindex = o
-");
-            if (!c._IsList())
-            {
-                sb.Append(@"
-");
-            }
-            foreach (var f in fs)
-            {
-                var ft = f.FieldType;
-                if (o == null)
-                {
-                    sb.Append(@"
-        o." + f.Name + " = null");
-                }
-                else
-                {
-                    var v = f.GetValue(f.IsStatic ? null : o);
-                    var dv = v._GetDefaultValueDecl_Lua(templateName);
-                    sb.Append(f._GetDesc()._GetComment_Lua(8));
-                    if (ft._IsWeak() || ft._IsStruct())
-                    {
-                        throw new Exception("LUA does not support weak_ptr or struct");
-                    }
-                    else if (dv != "")
-                    {
-                        sb.Append(@"
-        o." + f.Name + @" = " + dv);
-                    }
-                    else
-                    {
-                        sb.Append(@"
-        o." + f.Name + " = null");
-                    }
-                }
-                sb.Append(" -- " + ft._GetTypeDecl_Lua(templateName));
-            }
-
-            if (c._HasBaseType())
-            {
-                var bt = c.BaseType._GetTypeDecl_Lua(templateName);
-                sb.Append(@"
-        setmetatable( o, " + bt + @".Create() )");
-            }
-            sb.Append(@"
-        return o
-    end,
-    FromBBuffer = function( bb, o )");
-            if (c._HasBaseType())
-            {
-                var bt = c.BaseType._GetTypeDecl_Lua(templateName);
-                sb.Append(@"
-        local p = getmetatable( o )
-        p.__proto.FromBBuffer( bb, p )");
-            }
-            var ftns = new Dictionary<string, int>();
-            foreach (var f in fs)
-            {
-                var ft = f.FieldType;
-                var ftn = "";
-                if (ft._IsWeak() || ft._IsStruct())
-                {
-                    throw new Exception("LUA does not support weak_ptr or struct");
-                }
-                if (ft._IsNullable())
-                {
-                    ftn = "Nullable" + ft.GenericTypeArguments[0].Name;
-                }
-                else
-                {
-                    ftn = ft.IsEnum ? ft.GetEnumUnderlyingType().Name : ft._IsNumeric() ? ft.Name : "Object";
-                    if (ft._IsBBuffer() || ft._IsString()) ftn = "Object";
-                }
-                if (ftns.ContainsKey(ftn)) ftns[ftn]++;
-                else ftns.Add(ftn, 1);
-            }
-            foreach (var kvp in ftns)
-            {
-                if (kvp.Value > 1)
-                {
-                    sb.Append(@"
-        local Read" + kvp.Key + @" = bb.Read" + kvp.Key);
-                }
-            }
-            foreach (var f in fs)
-            {
-                var ft = f.FieldType;
-                var ftn = "";
-                if (ft._IsWeak() || ft._IsStruct())
-                {
-                    throw new Exception("LUA does not support weak_ptr or struct");
-                }
-                if (ft._IsNullable())
-                {
-                    ftn = "Nullable" + ft.GenericTypeArguments[0].Name;
-                }
-                else
-                {
-                    ftn = ft.IsEnum ? ft.GetEnumUnderlyingType().Name : ft._IsNumeric() ? ft.Name : "Object";
-                    if (ft._IsBBuffer() || ft._IsString()) ftn = "Object";
-                }
-                if (ftns[ftn] > 1)
-                {
-
-                    sb.Append(@"
-        o." + f.Name + @" = Read" + ftn + @"( bb )");
-                }
-                else
-                {
-                    sb.Append(@"
-        o." + f.Name + @" = bb:Read" + ftn + @"()");
-                }
-            }
-            if (c._IsList())
-            {
-                var fn = "ReadObject";
-                var ct = c.GenericTypeArguments[0];
-                if (ct._IsWeak() || ct._IsStruct())
-                {
-                    throw new Exception("LUA does not support weak_ptr or struct");
-                }
-                if (!ct._IsUserClass() && !ct._IsBBuffer() && !ct._IsString())
-                {
-                    if (ct.IsEnum)
-                    {
-                        var ctn = ct.GetEnumUnderlyingType().Name;
-                        fn = "Read" + ctn;
-                    }
-                    else
-                    {
-                        if (ct._IsNullable())
-                        {
-                            fn = "ReadNullable" + ct.GenericTypeArguments[0].Name;
-                        }
-                        else
-                        {
-                            fn = "Read" + ct.Name;
-                        }
-                    }
-                }
-                sb.Append(@"
-		local len = bb:ReadUInt32()
-        local f = BBuffer." + fn + @"
-		for i = 1, len do
-			o[ i ] = f( bb )
-		end");
-            }
-            sb.Append(@"
-    end,
-    ToBBuffer = function( bb, o )");
-            if (c._HasBaseType())
-            {
-                var bt = c.BaseType._GetTypeDecl_Lua(templateName);
-                sb.Append(@"
-        local p = getmetatable( o )
-        p.__proto.ToBBuffer( bb, p )");
-            }
-            foreach (var kvp in ftns)
-            {
-                if (kvp.Value > 1)
-                {
-                    sb.Append(@"
-        local Write" + kvp.Key + @" = bb.Write" + kvp.Key);
-                }
-            }
-            foreach (var f in fs)
-            {
-                var ft = f.FieldType;
-                var ftn = "";
-                if (ft._IsWeak() || ft._IsStruct())
-                {
-                    throw new Exception("LUA does not support weak_ptr or struct");
-                }
-                if (ft._IsNullable())
-                {
-                    ftn = "Nullable" + ft.GenericTypeArguments[0].Name;
-                }
-                else
-                {
-                    ftn = ft.IsEnum ? ft.GetEnumUnderlyingType().Name : ft._IsNumeric() ? ft.Name : "Object";
-                    if (ft._IsBBuffer() || ft._IsString()) ftn = "Object";
-                }
-                if (ftns[ftn] > 1)
-                {
-                    sb.Append(@"
-        Write" + ftn + @"( bb, o." + f.Name + @" )");
-                }
-                else
-                {
-                    sb.Append(@"
-        bb:Write" + ftn + @"( o." + f.Name + @" )");
-                }
-            }
-            if (c._IsList())
-            {
-                var fn = "WriteObject";
-                var ct = c.GenericTypeArguments[0];
-                if (!ct._IsUserClass() && !ct._IsBBuffer() && !ct._IsString())
-                {
-                    if (ct.IsEnum)
-                    {
-                        var ctn = ct.GetEnumUnderlyingType().Name;
-                        fn = "Write" + ctn;
-                    }
-                    else
-                    {
-                        var ctn = ct.Name;
-                        fn = "Write" + ctn;
-                    }
-
-                }
-                sb.Append(@"
-        local len = #o
-		bb:WriteUInt32( len )
-        local f = BBuffer." + fn + @"
-        for i = 1, len do
-			f( bb, o[ i ]" + @" )
-		end");
-            }
-            sb.Append(@"
-    end
+        this.defaultValue = defaultValue;
+        this.type = type;
+        this.jsTypeEnum = jsTypeEnum;
+    }
 }
-BBuffer.Register( " + cn + @" )");
+
+public static class GenJS_Class
+{
+    public static Info GetDefaultValue(string type)
+    {
+        if (type.StartsWith("xx::List", StringComparison.Ordinal))
+        {
+            return new Info("[]", "[]", "DataType.LIST");
+        }
+        if (type.StartsWith("PKG::", StringComparison.Ordinal))
+        {
+            //return "null";
+            return new Info("null", "any", "DataType.OBJ");
+        }
+        switch (type)
+        {
+            case "std::string_s":
+                {
+                    return new Info("\"\"", "string", "DataType.STRING");
+                }
+            case "bool":
+                {
+                    return new Info("false", "bool", "DataType.INT8");
+                }
+            case "uint8_t":
+                {
+                    return new Info("0", "number", "DataType.INT8");
+                }
+            case "int32_t":
+                {
+                    return new Info("0", "number", "DataType.INT32");
+                }
+            case "float":
+                {
+                    return new Info("0.0", "number", "DataType.FLOAT");
+                }
+            case "double":
+                {
+                    return new Info("0.0", "number", "DataType.DOUBLE");
+                }
+            case "int64_t":
+                {
+                    return new Info("BigInt(0)", "any", "DataType.INT64");
+                }
+            case "::xx::Pos":
+                {
+                    // TODO
+                    return new Info("null", "any", "DataType.XX_POS");
+                }
+            case "::xx::Random_s":
+                {
+                    // TODO
+                    return new Info("null", "any", "DataType.XX_RANDOM");
+                }
+            case "std::weak_ptr<PKG::CatchFish::Fish>":
+                {
+                    // TODO
+                    return new Info("null", "any", "DataType.OBJ");
+                }
+            default:
+                return new Info("null", "any", "DataType.OBJ");
+        }
+    }
+
+    public static bool Gen(Assembly asm, string outDir, string templateName, string md5, TemplateLibrary.Filter<TemplateLibrary.JsFilter> filter = null, bool generateBak = false)
+    {
+        var ts = asm._GetTypes();
+        var typeIds = new TemplateLibrary.TypeIds(asm);
+        //var sb = new StringBuilder();
+
+        var cs = ts._GetClasssStructs();
+        //var es = ts._GetEnums();
+
+
+        var ss = ts._GetStructs();
+        if (!generateBak)
+        {
+            ss._SortByInheritRelation();
+        }
+        else
+        {
+            ss._SortByFullName();
         }
 
-        // 临时方案
-        sb.Replace("`1", "");
+        cs = ts._GetClasss();
+        if (!generateBak)
+        {
+            cs._SortByInheritRelation();
+        }
+        else
+        {
+            cs._SortByFullName();
+        }
 
-        sb._WriteToFile(Path.Combine(outDir, templateName + "_class.lua"), 1);
+        List<string> classes = new List<string>();
+
+        // 预声明
+        for (int i = 0; i < cs.Count; ++i)
+        {
+            var sb = new StringBuilder();
+            sb.Append("// @flow\n\n");
+            var c = cs[i];
+            if (filter != null && !filter.Contains(c)) continue;
+            var o = asm.CreateInstance(c.FullName);
+            var namespace1 = c.Namespace.Replace(".", "::");
+
+
+            classes.Add("PKG::" + namespace1 + "::" + c.Name);
+
+            // 定位到基类
+            var bt = c.BaseType;
+            //var btn = c._HasBaseType() ? bt._GetTypeDecl_Cpp(templateName) : "PkgBase";
+            //btn = btn.Replace("::", "_");
+            var super = bt._GetTypeDecl_Cpp(templateName);
+            var btn = c._HasBaseType() ? super : "PkgBase";
+            var idx = btn.LastIndexOf("::", StringComparison.Ordinal);
+            if (idx != -1)
+            {            
+                btn = btn.Substring(idx + 2);
+            }
+
+            var deep = namespace1.Replace("::", "$").Split('$').Length + 1;
+
+            sb.Append("const { PkgBase, DataType } = require(\"");
+            for (int j = 0; j < deep; ++j)
+            {
+                sb.Append("../");
+            }
+            sb.Append("PkgBase\");\n");
+
+            if (c._HasBaseType())
+            {
+                sb.Append("const " + btn +" = require(\"");
+                for (int j = 0; j < deep; ++j)
+                {
+                    sb.Append("../");
+                }
+                foreach (var name in super.Replace("::", "$").Split('$'))
+                {
+                    sb.Append(name + "/");
+                }
+                sb.Remove(sb.Length - 1, 1);
+                sb.Append("\");\n");
+            }
+
+            // desc
+            // T xxxxxxxxx = defaultValue
+            // constexpr T xxxxxxxxx = defaultValue
+
+            var className = "PKG_" + namespace1 + "." + c.Name;
+            className = className.Replace('.', '_');
+
+            sb.Append(c._GetDesc()._GetComment_Cpp(0) + "\nclass " + c.Name + " extends " + btn + " {\n");
+
+            // typeId
+            sb.Append("    typeId = " + c.Name + ".typeId;");
+
+            // consts( static ) / fields
+            var fs = c._GetFieldsConsts();
+            foreach (var f in fs)
+            {
+                var ft = f.FieldType;
+                var ftn = ft._GetTypeDecl_Cpp(templateName, "_s");
+                var info = GetDefaultValue(ftn);
+                sb.Append(f._GetDesc()._GetComment_Cpp(4) + "\n");
+                sb.Append("    // " + ftn + "\n");
+                if (info.jsTypeEnum == "DataType.INT64")
+                {
+                    sb.Append("    // $FlowFixMe\n");
+                }
+                sb.Append("    " + f.Name  + ": " + info.type + " = " + info.defaultValue + ";");
+               
+            }
+            sb.Append("\n\n");
+
+            // push data
+            if (fs.Count > 0)
+            {
+                sb.Append("    constructor() {\n");
+                sb.Append("        super();\n");
+                sb.Append("        this.datas.push(\n");
+                foreach (var f in fs)
+                {
+                    var ft = f.FieldType;
+                    var ftn = ft._GetTypeDecl_Cpp(templateName, "_s");
+                    var info = GetDefaultValue(ftn);
+                    sb.Append("            {\n");
+                    sb.Append("                type: " + info.jsTypeEnum + ",\n");
+                    sb.Append("                key: '" + f.Name + "',\n");
+                    sb.Append("            },\n");
+                }
+                sb.Append("        );\n");
+                sb.Append("    }\n\n");
+
+
+
+                foreach (var kv in typeIds.types)
+                {
+                    if (filter != null && !filter.Contains(kv.Key)) continue;
+                    var ct = kv.Key;
+                    if (ct._IsString() || ct._IsBBuffer() || ct._IsExternal() && !ct._GetExternalSerializable()) continue;
+                    var typeId = kv.Value;
+                    var ctn = ct._GetTypeDecl_Cpp(templateName);
+
+                    //System.Console.WriteLine(ctn.Replace("::", "_") + "    " + className);
+                    if (ctn.Replace("::", "_") == className.Replace("::", "_"))
+                    {
+                        sb.Append("    static typeId = " + typeId + ";\n\n");
+                    }
+                }
+            }
+            sb.Append("}\n\n");
+
+            //sb.Append("\n" + c.Name + ".typeId = " + c.Name + ";\n\n");
+            sb.Append("module.exports = " + c.Name + ";\n");
+
+            var dirs = (outDir + "/PKG::" + namespace1).Replace("::", "/");
+            //dirs = dirs.Replace('.', '/');
+            Directory.CreateDirectory(dirs);
+            sb._WriteToFile(Path.Combine(dirs, c.Name + ".js"));
+        }
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("// @flow\n\n");
+            sb.Append("const { MsgDecoder } = require(\"../msg/MsgDecoder\")\n");
+            foreach (var classname in classes)
+            {
+                sb.Append("const " + classname.Replace("::", "_") + " = require(\"./" + classname.Replace("::", "/") + "\");\n");
+            }
+            sb.Append("\n");
+            sb.Append("module.exports = function (md: MsgDecoder) {\n");
+            foreach (var classname in classes)
+            {
+                sb.Append("    md.register(" + classname.Replace("::", "_") + ");\n");
+            }
+            sb.Append("};\n");
+
+
+            sb._WriteToFile(Path.Combine(outDir, "RegiserPkgs.js"));
+        }
+
+        return true;
     }
 }
