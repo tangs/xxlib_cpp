@@ -22,6 +22,14 @@ public static class GenJS_Class
 {
     public static Info GetDefaultValue(string type)
     {
+        if (type == "PKG::CatchFish::Sits")
+        {
+            return new Info("0", "number", "DataType.INT32");
+        }
+        if (type == "xx::List_s<PKG::CatchFish::Sits>")
+        {
+            return new Info("[]", "[]", "DataType.xx_LIST_SITS");
+        }
         if (type.StartsWith("xx::List", StringComparison.Ordinal))
         {
             return new Info("[]", "[]", "DataType.LIST");
@@ -193,7 +201,7 @@ public static class GenJS_Class
             sb.Append("\n\n");
 
             // push data
-            if (fs.Count > 0)
+            //if (fs.Count > 0)
             {
                 sb.Append("    constructor() {\n");
                 sb.Append("        super();\n");
@@ -211,17 +219,15 @@ public static class GenJS_Class
                 sb.Append("        );\n");
                 sb.Append("    }\n\n");
 
-
-
                 foreach (var kv in typeIds.types)
                 {
-                    if (filter != null && !filter.Contains(kv.Key)) continue;
+                    //if (filter != null && !filter.Contains(kv.Key)) continue;
                     var ct = kv.Key;
-                    if (ct._IsString() || ct._IsBBuffer() || ct._IsExternal() && !ct._GetExternalSerializable()) continue;
+                    //if (ct._IsString() || ct._IsBBuffer() || ct._IsExternal() && !ct._GetExternalSerializable()) continue;
                     var typeId = kv.Value;
                     var ctn = ct._GetTypeDecl_Cpp(templateName);
 
-                    //System.Console.WriteLine(ctn.Replace("::", "_") + "    " + className);
+                    System.Console.WriteLine(ctn.Replace("::", "_") + "    " + className.Replace("::", "_"));
                     if (ctn.Replace("::", "_") == className.Replace("::", "_"))
                     {
                         sb.Append("    static typeId = " + typeId + ";\n\n");
