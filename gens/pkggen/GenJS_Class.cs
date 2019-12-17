@@ -9,83 +9,124 @@ public class Info
     public string defaultValue;
     public string type;
     public string jsTypeEnum;
+    public bool isObj;
 
-    public Info(string defaultValue, string type, string jsTypeEnum)
+    public Info(string defaultValue, string type, string jsTypeEnum, bool isObj)
     {
         this.defaultValue = defaultValue;
         this.type = type;
         this.jsTypeEnum = jsTypeEnum;
+        this.isObj = isObj;
     }
 }
 
 public static class GenJS_Class
 {
+    public static string GetClassName(string type)
+    {
+        var str = type;
+        int startIdx;
+        int endIdx;
+        while ((startIdx = str.IndexOf("<", StringComparison.Ordinal)) != -1)
+        {
+            endIdx = str.LastIndexOf(">", StringComparison.Ordinal);
+            str = str.Substring(startIdx + 1, endIdx - startIdx - 1);
+        }
+        endIdx = str.LastIndexOf("_s", StringComparison.Ordinal);
+        if (endIdx != -1)
+        {
+            str = str.Substring(0, endIdx);
+        }
+        return str.Replace("::", "__");
+    }
+
     public static Info GetDefaultValue(string type)
     {
+        // 处理特殊情况
         if (type == "PKG::CatchFish::Sits")
         {
-            return new Info("0", "number", "DataType.INT32");
+            return new Info("0", "number", "DataType.INT32", false);
         }
         if (type == "xx::List_s<PKG::CatchFish::Sits>")
         {
-            return new Info("[]", "[]", "DataType.xx_LIST_SITS");
+            return new Info("[]", "number[]", "DataType.xx_LIST_SITS", false);
         }
+        if (type == "xx::List_s<int32_t>")
+        {
+            return new Info("[]", "number[]", "DataType.LIST_INT32", false);
+        }
+        if (type == "xx::List_s<::xx::Pos>" || type == "xx::List_s<xx::List_s<::xx::Pos>>")
+        {
+            return new Info("[]", "[]", "DataType.LIST", false);
+        }
+        if (type == "xx::List_s<PKG::CatchFish::WayPoint>")
+        {
+            return new Info("[]", "[]", "DataType.LIST_WAY_POINT", false);
+        }
+
+        // 处理通用情况
         if (type.StartsWith("xx::List", StringComparison.Ordinal))
         {
-            return new Info("[]", "[]", "DataType.LIST");
+            var className = GetClassName(type);
+            return new Info("[]", className + "[]", "DataType.LIST", true);
         }
         if (type.StartsWith("PKG::", StringComparison.Ordinal))
         {
-            //return "null";
-            return new Info("null", "any", "DataType.OBJ");
+            var className = GetClassName(type);
+            return new Info("", className, "DataType.OBJ", true);
+        }
+        if (type.StartsWith("std::weak_ptr", StringComparison.Ordinal))
+        {
+            var className = GetClassName(type);
+            return new Info("", className, "DataType.OBJ", true);
         }
         switch (type)
         {
             case "std::string_s":
                 {
-                    return new Info("\"\"", "string", "DataType.STRING");
+                    return new Info("\"\"", "string", "DataType.STRING", false);
                 }
             case "bool":
                 {
-                    return new Info("false", "bool", "DataType.INT8");
+                    return new Info("false", "bool", "DataType.INT8", false);
                 }
             case "uint8_t":
                 {
-                    return new Info("0", "number", "DataType.INT8");
+                    return new Info("0", "number", "DataType.INT8", false);
                 }
             case "int32_t":
                 {
-                    return new Info("0", "number", "DataType.INT32");
+                    return new Info("0", "number", "DataType.INT32", false);
                 }
             case "float":
                 {
-                    return new Info("0.0", "number", "DataType.FLOAT");
+                    return new Info("0.0", "number", "DataType.FLOAT", false);
                 }
             case "double":
                 {
-                    return new Info("0.0", "number", "DataType.DOUBLE");
+                    return new Info("0.0", "number", "DataType.DOUBLE", false);
                 }
             case "int64_t":
                 {
-                    return new Info("BigInt(0)", "any", "DataType.INT64");
+                    return new Info("BigInt(0)", "any", "DataType.INT64", false);
                 }
             case "::xx::Pos":
                 {
                     // TODO
-                    return new Info("null", "any", "DataType.XX_POS");
+                    return new Info("null", "any", "DataType.XX_POS", false);
                 }
             case "::xx::Random_s":
                 {
                     // TODO
-                    return new Info("null", "any", "DataType.XX_RANDOM");
+                    return new Info("null", "any", "DataType.XX_RANDOM", false);
                 }
-            case "std::weak_ptr<PKG::CatchFish::Fish>":
-                {
-                    // TODO
-                    return new Info("null", "any", "DataType.OBJ");
-                }
+            //case "std::weak_ptr<PKG::CatchFish::Fish>":
+            //    {
+            //        // TODO
+            //        return new Info("null", "any", "DataType.OBJ", true);
+            //    }
             default:
-                return new Info("null", "any", "DataType.OBJ");
+                return new Info("", "any", "DataType.OBJ", true);
         }
     }
 
@@ -148,12 +189,38 @@ public static class GenJS_Class
 
             var deep = namespace1.Replace("::", "$").Split('$').Length + 1;
 
+
             sb.Append("const { PkgBase, DataType } = require(\"");
             for (int j = 0; j < deep; ++j)
             {
                 sb.Append("../");
             }
-            sb.Append("PkgBase\");\n");
+            sb.Append("PkgBase\");\n\n");
+
+            var fs = c._GetFieldsConsts();
+            var includeSet = new HashSet<string>();
+            foreach (var f in fs)
+            {
+                var sb1 = new StringBuilder();
+                var ft = f.FieldType;
+                var ftn = ft._GetTypeDecl_Cpp(templateName, "_s");
+                if (!GetDefaultValue(ftn).isObj) continue;
+                var className1 = GetClassName(ftn);
+                var path = className1.Replace("__", "/");
+
+                sb1.Append("const " + className1 + " = require(\"");
+                for (int j = 0; j < deep; ++j)
+                {
+                    sb1.Append("../");
+                }
+
+                sb1.Append(path + "\");\n");
+                includeSet.Add(sb1.ToString());
+            }
+            foreach (var str in includeSet)
+            {
+                sb.Append(str);
+            }
 
             if (c._HasBaseType())
             {
@@ -180,10 +247,11 @@ public static class GenJS_Class
             sb.Append(c._GetDesc()._GetComment_Cpp(0) + "\nclass " + c.Name + " extends " + btn + " {\n");
 
             // typeId
-            sb.Append("    typeId = " + c.Name + ".typeId;");
+            sb.Append("    typeId = " + c.Name + ".typeId;\n");
 
+            //sb.Append("    // $FlowFixMe\n");
+            //sb.Append("    props: {}  = {");
             // consts( static ) / fields
-            var fs = c._GetFieldsConsts();
             foreach (var f in fs)
             {
                 var ft = f.FieldType;
@@ -195,9 +263,16 @@ public static class GenJS_Class
                 {
                     sb.Append("    // $FlowFixMe\n");
                 }
-                sb.Append("    " + f.Name  + ": " + info.type + " = " + info.defaultValue + ";");
-               
+                //sb.Append("        " + f.Name + ": " + info.defaultValue + ",");
+                sb.Append("    " + f.Name + ": " + info.type);
+                if (info.defaultValue.Length > 0)
+                {
+                    sb.Append(" = " + info.defaultValue);
+                }
+                sb.Append(";");
+
             }
+            //sb.Append("\n    };");
             sb.Append("\n\n");
 
             // push data
