@@ -90,7 +90,7 @@ server: makeDirs $(prevFiles) $(obj)
 	$(CC) -Wall $(INC) $(CFLAGS) -o $(BIN_DIR)/calc.out \
 	$(OBJ_DIR)/ikcp.o \
 	$(OBJ_DIR)/main.o $(LIBS)
-	-cp -rf ../gens/output/cfg.bin $(DEST_DIR)
+	-cp -rf ../gens/output/cfg.bin $(BIN_DIR)
 
 include $(wildcard $(D_DIR)/*.dpp)
 include $(wildcard $(D_DIR)/*.d)
