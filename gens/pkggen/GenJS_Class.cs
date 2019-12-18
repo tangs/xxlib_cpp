@@ -387,11 +387,11 @@ public static class GenJS_Class
         {
             StringBuilder sb = new StringBuilder();
             sb.Append("// @flow\n\n");
-            sb.Append("const { MsgDecoder } = require(\"../msg/msg-decoder\")\n");
+            sb.Append("const { MsgDecoder } = require(\"../msg/msg-decoder\");\n");
             foreach (var classname in classes)
             {
                 var name1 = ConverJsClassName(classname);
-                sb.Append("const " + classname.Replace("::", "_") + " = require(\"./" + name1 + "\")\n");
+                sb.Append("const " + classname.Replace("::", "_") + " = require(\"./" + name1 + "\");\n");
             }
             sb.Append("\n");
             sb.Append("module.exports = function (md: MsgDecoder) {\n");
