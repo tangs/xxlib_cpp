@@ -111,9 +111,13 @@ public static class GenJS_Class
         {
             return new Info("[]", "number[]", "DataType.LIST_INT32", false);
         }
-        if (type == "xx::List_s<::xx::Pos>" || type == "xx::List_s<xx::List_s<::xx::Pos>>")
+        if (type == "xx::List_s<xx::List_s<::xx::Pos>>")
         {
             return new Info("[]", "[]", "DataType.LIST", false);
+        }
+        if (type == "xx::List_s<::xx::Pos>")
+        {
+            return new Info("null", "any", "DataType.OBJ", false);
         }
         if (type == "xx::List_s<PKG::CatchFish::WayPoint>")
         {
@@ -144,11 +148,11 @@ public static class GenJS_Class
                 }
             case "bool":
                 {
-                    return new Info("false", "bool", "DataType.INT8", false);
+                    return new Info("false", "bool", "DataType.BOOL", false);
                 }
             case "uint8_t":
                 {
-                    return new Info("0", "number", "DataType.INT8", false);
+                    return new Info("0", "number", "DataType.UINT8", false);
                 }
             case "int32_t":
                 {
