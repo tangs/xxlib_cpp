@@ -40,6 +40,62 @@ public static class GenJS_Class
         return str.Replace("::", "__");
     }
 
+    public static string RepeatString(string str, int times)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < times; ++i)
+        {
+            sb.Append(str);
+        }
+        return sb.ToString();
+    }
+
+    public static string NSpace(int n)
+    {
+        return RepeatString(" ", n);
+    }
+
+    public static string ConverJsClassName(string path)
+    {
+        path = path.Replace("__", "/").Replace("::", "/");
+        var jsClassName = "";
+        var idx1 = path.LastIndexOf("/", StringComparison.Ordinal);
+        if (idx1 == -1)
+        {
+            jsClassName = path;
+            path = "";
+        }
+        else
+        {
+            jsClassName = path.Substring(idx1 + 1);
+            path = path.Substring(0, idx1 + 1);
+        }
+
+        var sb = new StringBuilder(path);
+        var len = jsClassName.Length;
+        for (int i = 0; i < len; ++i)
+        {
+            char ch = jsClassName[i];
+            if (ch == '_')
+            {
+                continue;
+            }
+            else if (Char.IsUpper(ch))
+            {
+                if (i != 0)
+                {
+                    sb.Append("-");
+                }
+                sb.Append(Char.ToLower(ch));
+            }
+            else
+            {
+                sb.Append(ch);
+            }
+        }
+        return sb.ToString().ToLower();
+    }
+
     public static Info GetDefaultValue(string type)
     {
         // 处理特殊情况
@@ -195,7 +251,7 @@ public static class GenJS_Class
             {
                 sb.Append("../");
             }
-            sb.Append("PkgBase\");\n\n");
+            sb.Append("pkg-base\");\n");
 
             var fs = c._GetFieldsConsts();
             var includeSet = new HashSet<string>();
@@ -206,7 +262,10 @@ public static class GenJS_Class
                 var ftn = ft._GetTypeDecl_Cpp(templateName, "_s");
                 if (!GetDefaultValue(ftn).isObj) continue;
                 var className1 = GetClassName(ftn);
+                //var jsCalssName = ConverJsClassName(className1);
                 var path = className1.Replace("__", "/");
+                var jsClassName = ConverJsClassName(path);
+
 
                 sb1.Append("const " + className1 + " = require(\"");
                 for (int j = 0; j < deep; ++j)
@@ -214,14 +273,11 @@ public static class GenJS_Class
                     sb1.Append("../");
                 }
 
-                sb1.Append(path + "\");\n");
+                sb1.Append(jsClassName + "\");\n");
                 includeSet.Add(sb1.ToString());
             }
-            foreach (var str in includeSet)
-            {
-                sb.Append(str);
-            }
 
+            // require super class
             if (c._HasBaseType())
             {
                 sb.Append("const " + btn +" = require(\"");
@@ -229,12 +285,20 @@ public static class GenJS_Class
                 {
                     sb.Append("../");
                 }
-                foreach (var name in super.Replace("::", "$").Split('$'))
-                {
-                    sb.Append(name + "/");
-                }
-                sb.Remove(sb.Length - 1, 1);
+                var name1 = ConverJsClassName(super);
+                sb.Append(name1);
+                //foreach (var name in super.Replace("::", "$").Split('$'))
+                //{
+                //    sb.Append(name + "/");
+                //}
+                //sb.Remove(sb.Length - 1, 1);
                 sb.Append("\");\n");
+            }
+
+            sb.Append("\n");
+            foreach (var str in includeSet)
+            {
+                sb.Append(str);
             }
 
             // desc
@@ -314,18 +378,20 @@ public static class GenJS_Class
             //sb.Append("\n" + c.Name + ".typeId = " + c.Name + ";\n\n");
             sb.Append("module.exports = " + c.Name + ";\n");
 
-            var dirs = (outDir + "/PKG::" + namespace1).Replace("::", "/");
+            var dirs = (outDir + "/PKG::" + namespace1).Replace("::", "/").ToLower();
             //dirs = dirs.Replace('.', '/');
+            var jsFilename = ConverJsClassName(c.Name);
             Directory.CreateDirectory(dirs);
-            sb._WriteToFile(Path.Combine(dirs, c.Name + ".js"));
+            sb._WriteToFile(Path.Combine(dirs, jsFilename + ".js"));
         }
         {
             StringBuilder sb = new StringBuilder();
             sb.Append("// @flow\n\n");
-            sb.Append("const { MsgDecoder } = require(\"../msg/MsgDecoder\")\n");
+            sb.Append("const { MsgDecoder } = require(\"../msg/msg-decoder\")\n");
             foreach (var classname in classes)
             {
-                sb.Append("const " + classname.Replace("::", "_") + " = require(\"./" + classname.Replace("::", "/") + "\");\n");
+                var name1 = ConverJsClassName(classname);
+                sb.Append("const " + classname.Replace("::", "_") + " = require(\"./" + name1 + "\")\n");
             }
             sb.Append("\n");
             sb.Append("module.exports = function (md: MsgDecoder) {\n");
@@ -336,7 +402,7 @@ public static class GenJS_Class
             sb.Append("};\n");
 
 
-            sb._WriteToFile(Path.Combine(outDir, "RegiserPkgs.js"));
+            sb._WriteToFile(Path.Combine(outDir, "regiser-pkgs.js"));
         }
 
         return true;
