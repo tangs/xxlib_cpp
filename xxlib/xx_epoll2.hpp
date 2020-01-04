@@ -19,8 +19,8 @@ namespace xx::Epoll {
 	inline Item::~Item() {
 		if (fd != -1) {
 			assert(ep);
-			ep->CloseDel(fd);
 			ep->fdMappings[fd] = nullptr;
+			ep->CloseDel(fd);
 			fd = -1;
 		}
 	}
@@ -32,16 +32,33 @@ namespace xx::Epoll {
 	template<typename T>
 	inline Ref<T>::Ref(T* const& ptr) {
 		static_assert(std::is_base_of_v<Item, T>);
-		assert(ptr);
-		assert(ptr->ep);
-		assert(ptr->indexAtContainer != -1);
-		items = &ptr->ep->items;
-		index = ptr->indexAtContainer;
-		version = items->VersionAt(index);
+		Reset(ptr);
 	}
 
 	template<typename T>
 	inline Ref<T>::Ref(std::unique_ptr<T> const& ptr) : Ref(ptr.get()) {}
+
+
+	template<typename T>
+	template<typename U>
+	Ref<T>& Ref<T>::operator=(std::enable_if_t<std::is_base_of_v<T, U>, Ref<U>> const& o) {
+		return operator=(*(Ref<T>*) & o);
+	}
+
+	template<typename T>
+	template<typename U>
+	Ref<T>& Ref<T>::operator=(std::enable_if_t<std::is_base_of_v<T, U>, Ref<U>>&& o) {
+		return operator=(std::move(*(Ref<T>*) & o));
+	}
+
+
+	template<typename T>
+	template<typename U>
+	inline Ref<U> Ref<T>::As() const {
+		if (!dynamic_cast<U*>(Lock())) return Ref<U>();
+		return *(Ref<U>*)this;
+	}
+
 
 	template<typename T>
 	inline Ref<T>::operator bool() const {
@@ -61,14 +78,20 @@ namespace xx::Epoll {
 
 	template<typename T>
 	template<typename U>
-	inline Ref<U> Ref<T>::As() const {
-		auto p = Lock();
-		if (!dynamic_cast<U*>(p)) return Ref<U>();
-		Ref<U> rtv;
-		rtv.items = items;
-		rtv.index = index;
-		rtv.version = version;
-		return rtv;
+	inline void Ref<T>::Reset(U* const& ptr) {
+		static_assert(std::is_base_of_v<T, U>);
+		if (!ptr) {
+			items = nullptr;
+			index = -1;
+			version = 0;
+		}
+		else {
+			assert(ptr->ep);
+			assert(ptr->indexAtContainer != -1);
+			items = &ptr->ep->items;
+			index = ptr->indexAtContainer;
+			version = items->VersionAt(index);
+		}
 	}
 
 
@@ -317,11 +340,11 @@ namespace xx::Epoll {
 
 	inline int TcpListener::Accept(int const& listenFD) {
 		// 开始创建 fd
-		sockaddr addr;						// todo: ipv6 support. 根据 listener fd 的协议栈来路由
+		sockaddr_in6 addr;
 		socklen_t len = sizeof(addr);
 
 		// 接收并得到目标 fd
-		int fd = accept(listenFD, &addr, &len);
+		int fd = accept(listenFD, (sockaddr*)&addr, &len);
 		if (-1 == fd) {
 			ep->lastErrorNumber = errno;
 			if (ep->lastErrorNumber == EAGAIN || ep->lastErrorNumber == EWOULDBLOCK) return 0;
@@ -389,11 +412,8 @@ namespace xx::Epoll {
 		int err;
 		socklen_t result_len = sizeof(err);
 		if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &result_len) == -1 || err) {
-			// error
-			if (e & EPOLLERR || e & EPOLLHUP) {
-				Dispose();
-				return;
-			}
+			Dispose();
+			return;
 		}
 
 		// 连接成功. 自杀前备份变量到栈
@@ -407,10 +427,12 @@ namespace xx::Epoll {
 
 		// 这之后只能用 "栈"变量
 		d->Stop();
-		auto peer = d->OnCreatePeer(false);
+		auto peer = d->OnCreatePeer(Protocol::Tcp);
 		if (peer) {
-			auto p = ep->AddItem(std::move(peer), fd);
-			// todo: fill peer->ip by tcp socket?
+			auto p = ep->AddItem(std::move(peer), fd);	// peer is moved
+			// fill address
+			result_len = sizeof(p->addr);
+			getpeername(fd, (sockaddr*)&p->addr, &result_len);
 			d->OnConnect(p);
 		}
 		else {
@@ -437,7 +459,6 @@ namespace xx::Epoll {
 			if (!recv.cap) {
 				recv.Reserve(readBufLen);
 			}
-			// todo: 是否需要检测 ipv4/6 进而填充适当的长度?
 			socklen_t addrLen = sizeof(addr);
 			auto len = recvfrom(fd, recv.buf, recv.cap, 0, (struct sockaddr*) & addr, &addrLen);
 			if (len < 0) {
@@ -445,26 +466,24 @@ namespace xx::Epoll {
 				Dispose();
 				return;
 			}
-			// todo: len == 0 有没有可能?
+			if (!len) return;
 			recv.len = len;
 			OnReceive();
 		}
-		// write:  todo
+		// write: 当前 udp 不启用发送队列
 	}
 
 	inline int UdpPeer::Send(xx::Buf&& data) {
-		// todo: 压队列并 Write? 一次最多发送 64k? 切片塞队列? 监视可写事件? 下次事件来继续发?
-		auto r = sendto(fd, data.buf, data.len, 0, (sockaddr*)&addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+		auto r = sendto(fd, data.buf, data.len, 0, (sockaddr*)&addr, sizeof(addr));
 		return r > 0 ? 0 : (int)r;
 	}
 
 	inline int UdpPeer::Send(char const* const& buf, size_t const& len) {
-		auto r = sendto(fd, buf, len, 0, (sockaddr*)&addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+		auto r = sendto(fd, buf, len, 0, (sockaddr*)&addr, sizeof(addr));
 		return r > 0 ? 0 : (int)r;
 	}
 
 	inline int UdpPeer::Flush() {
-		// todo: 继续发队列里的?
 		return 0;
 	}
 
@@ -566,7 +585,7 @@ namespace xx::Epoll {
 			if (peer->InitKcp()) return;
 
 			// 更新地址信息
-			memcpy(&peer->addr, &addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+			memcpy(&peer->addr, &addr, sizeof(addr));
 
 			// 放入容器
 			p = ep->AddItem(std::move(peer));
@@ -586,7 +605,7 @@ namespace xx::Epoll {
 			p = kcps.ValueAt(peerIter);
 
 			// 更新地址信息
-			memcpy(&p->addr, &addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+			memcpy(&p->addr, &addr, sizeof(addr));
 		}
 
 		// 将数据灌入 kcp. 进而可能触发 peer->OnReceive 进而 Dispose
@@ -719,7 +738,7 @@ namespace xx::Epoll {
 
 	inline void KcpConn::OnTimeout() {
 		(void)Send((char*)&serial, 4);
-		SetTimeout(ep->ToFrames(0.2));	// 按 0.2 秒间隔 repeat ( 可能受 cpu 占用影响而剧烈波动 )
+		SetTimeout(ep->SecToFrames(0.2));	// 按 0.2 秒间隔 repeat ( 可能受 cpu 占用影响而剧烈波动 )
 	}
 
 	inline void KcpConn::Init() {
@@ -765,7 +784,7 @@ namespace xx::Epoll {
 			d->Stop();
 
 			// 开始创建 peer
-			auto u = d->OnCreatePeer(true);
+			auto u = d->OnCreatePeer(Protocol::Kcp);
 			if (!u) return;
 			auto p = dynamic_cast<KcpPeer*>(u.get());
 			if (!p) return;
@@ -776,7 +795,7 @@ namespace xx::Epoll {
 			if (p->InitKcp()) return;
 
 			// 继续填充
-			memcpy(&p->addr, (sockaddr*)&addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+			memcpy(&p->addr, &addr, sizeof(addr));
 
 			// 和 kcppeer 双向绑定
 			this->peer = p;
@@ -810,7 +829,7 @@ namespace xx::Epoll {
 		if (peer->conv != conv) return;
 
 		// 更新地址
-		memcpy(&peer->addr, (sockaddr*)&addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN);
+		memcpy(&peer->addr, &addr, sizeof(addr));
 
 		// 向 kcppeer 提供数据. 可能导致 this Dispose
 		{
@@ -828,29 +847,30 @@ namespace xx::Epoll {
 	// Dialer
 	/***********************************************************************************************************/
 
-	inline int Dialer::AddAddress(std::string const& ip, int const& port) {
-		auto&& addr = addrs.emplace_back();
-		if (int r = FillAddress(ip, port, addr)) {
+	inline int Dialer::AddAddress(std::string const& ip, int const& port, Protocol const& protocol) {
+		auto&& a = addrs.emplace_back();
+		if (int r = FillAddress(ip, port, a.first)) {
 			addrs.pop_back();
 			return r;
 		}
+		a.second = protocol;
 		return 0;
 	}
 
-	inline int Dialer::Dial(int const& timeoutFrames, Protocol const& protocol) {
+	inline int Dialer::Dial(int const& timeoutFrames) {
 		Stop();
 		SetTimeout(timeoutFrames);
-		for (auto&& addr : addrs) {
+		for (auto&& a : addrs) {
 			int r = 0;
-			if (protocol == Protocol::Tcp || protocol == Protocol::Both) {
-				r = NewTcpConn(addr);
+			if (a.second == Protocol::Tcp || a.second == Protocol::Both) {
+				r = NewTcpConn(a.first);
 			}
 			if (r) {
 				Stop();
 				return r;
 			}
-			if (protocol == Protocol::Kcp || protocol == Protocol::Both) {
-				r = NewKcpConn(addr);
+			if (a.second == Protocol::Kcp || a.second == Protocol::Both) {
+				r = NewKcpConn(a.first);
 			}
 			if (r) {
 				Stop();
@@ -887,8 +907,8 @@ namespace xx::Epoll {
 		Stop();
 	}
 
-	inline Peer_u Dialer::OnCreatePeer(bool const& isKcp) {
-		if (isKcp) {
+	inline Peer_u Dialer::OnCreatePeer(Protocol const& protocol) {
+		if (protocol == Protocol::Tcp) {
 			return xx::TryMakeU<TcpPeer>();
 		}
 		else {
@@ -913,7 +933,7 @@ namespace xx::Epoll {
 		if (-1 == setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char*)&on, sizeof(on))) return -3;
 
 		// 开始连接
-		if (connect(fd, (sockaddr*)&addr, addr.sin6_family == AF_INET6 ? INET6_ADDRSTRLEN : INET_ADDRSTRLEN) == -1) {
+		if (connect(fd, (sockaddr*)&addr, sizeof(addr)) == -1) {
 			if (errno != EINPROGRESS) return -4;
 		}
 		// else : 立刻连接上了
@@ -968,6 +988,167 @@ namespace xx::Epoll {
 	}
 
 
+	/***********************************************************************************************************/
+	// CommandHandler
+	/***********************************************************************************************************/
+
+	inline CommandHandler::CommandHandler() {
+		// 初始化 readline 第三方组件. 通过静态函数 访问静态 self 类 从而调用类成员函数
+		self = this;
+		rl_attempted_completion_function = (rl_completion_func_t*)&CompleteCallback;
+		rl_callback_handler_install("# ", (rl_vcpfunc_t*)&ReadLineCallback);
+	}
+
+	inline void CommandHandler::Exec(char const* const& row, size_t const& len) {
+		// 读取 row 内容, call ep->cmds[ args[0] ]( args )
+		auto&& args = ep->args;
+		args.clear();
+		std::string s;
+		bool jumpSpace = true;
+		for (size_t i = 0; i < len; ++i) {
+			auto c = row[i];
+			if (jumpSpace) {
+				if (c != '	' && c != ' '/* && c != 10*/) {
+					s += c;
+					jumpSpace = false;
+				}
+				continue;
+			}
+			else if (c == '	' || c == ' '/* || c == 10*/) {
+				args.emplace_back(std::move(s));
+				jumpSpace = true;
+				continue;
+			}
+			else {
+				s += c;
+			}
+		}
+		if (s.size()) {
+			args.emplace_back(std::move(s));
+		}
+
+		if (args.size()) {
+			auto&& iter = ep->cmds.find(args[0]);
+			if (iter != ep->cmds.end()) {
+				if (iter->second) {
+					iter->second(args);
+				}
+			}
+			else {
+				xx::CoutN("unknown command: ", args[0]);
+			}
+		}
+	}
+
+	inline void CommandHandler::ReadLineCallback(char* line) {
+		if (!line) return;
+		auto len = strlen(line);
+		if (len) {
+			add_history(line);
+		}
+		self->Exec(line, len);
+		free(line);
+	}
+
+	inline char* CommandHandler::CompleteGenerate(const char* text, int state) {
+		// This function is called with state=0 the first time; subsequent calls are
+		  // with a nonzero state. state=0 can be used to perform one-time
+		  // initialization for this completion session.
+		static std::vector<std::string> matches;
+		static size_t match_index = 0;
+
+		if (state == 0) {
+			// During initialization, compute the actual matches for 'text' and keep
+			// them in a static vector.
+			matches.clear();
+			match_index = 0;
+
+			// Collect a vector of matches: vocabulary words that begin with text.
+			std::string textstr = std::string(text);
+			for (auto&& kv : self->ep->cmds) {
+				auto&& word = kv.first;
+				if (word.size() >= textstr.size() &&
+					word.compare(0, textstr.size(), textstr) == 0) {
+					matches.push_back(word);
+				}
+			}
+		}
+
+		if (match_index >= matches.size()) {
+			// We return nullptr to notify the caller no more matches are available.
+			return nullptr;
+		}
+		else {
+			// Return a malloc'd char* for the match. The caller frees it.
+			return strdup(matches[match_index++].c_str());
+		}
+	}
+
+	inline char** CommandHandler::CompleteCallback(const char* text, int start, int end) {
+		// Don't do filename completion even if our generator finds no matches.
+		rl_attempted_completion_over = 1;
+
+		// Note: returning nullptr here will make readline use the default filename
+		// completer.
+		return rl_completion_matches(text, (rl_compentry_func_t*)&CompleteGenerate);
+	}
+
+	inline void CommandHandler::OnEpollEvent(uint32_t const& e) {
+		// error
+		if (e & EPOLLERR || e & EPOLLHUP) {
+			Dispose();
+			return;
+		}
+
+		rl_callback_read_char();
+	}
+
+	inline CommandHandler::~CommandHandler() {
+		rl_callback_handler_remove();
+		rl_clear_history();
+
+		epoll_ctl(ep->efd, EPOLL_CTL_DEL, fd, nullptr);
+		ep->fdMappings[fd] = nullptr;
+		fd = -1;
+	}
+
+
+	/***********************************************************************************************************/
+	// INotifyHandler
+	/***********************************************************************************************************/
+
+	inline void INotifyHandler::OnEvent(char const* const& fn, uint32_t const& mask) {
+		if (onEvent) {
+			onEvent(fn, mask);
+		}
+	}
+
+	inline void INotifyHandler::OnEpollEvent(uint32_t const& e) {
+		// error
+		if (e & EPOLLERR || e & EPOLLHUP) {
+			Dispose();
+			return;
+		}
+
+		Ref<Item> alive(this);
+		buf[sizeof(buf) - 1] = 0;
+		ssize_t len;
+		while ((len = read(fd, buf, sizeof(buf) - 1)) > 0) {
+			ssize_t nread = 0;
+			while (len - nread > 0) {
+				auto&& event = (inotify_event*)&buf[nread];
+				//for (int i = 0; i < 12; i++) {
+				//	if ((event->mask >> i) & 1) {
+						OnEvent(event->len ? event->name : nullptr, event->mask);
+						if (!alive) return;
+					//}
+				//}
+				nread = nread + sizeof(inotify_event) + event->len;
+			}
+		}
+	}
+
+
 
 	/***********************************************************************************************************/
 	// Context
@@ -978,14 +1159,17 @@ namespace xx::Epoll {
 		efd = epoll_create1(0);
 		if (-1 == efd) throw - 1;
 
-		// 初始化处理类映射表
-		fdMappings.fill(nullptr);
-
 		// 初始化时间伦
 		wheel.resize(wheelLen);
+
+		// 初始化处理类映射表
+		fdMappings.fill(nullptr);
 	}
 
 	inline Context::~Context() {
+		// 直接清掉内存. 非正常析构.
+		recvBB.Reset();
+
 		// 所有 items 析构
 		items.Clear();
 
@@ -1000,7 +1184,7 @@ namespace xx::Epoll {
 		char portStr[20];
 		snprintf(portStr, sizeof(portStr), "%d", port);
 
-		addrinfo hints;														// todo: ipv6 support
+		addrinfo hints;
 		memset(&hints, 0, sizeof(addrinfo));
 		hints.ai_family = AF_UNSPEC;										// ipv4 / 6
 		hints.ai_socktype = sockType;										// SOCK_STREAM / SOCK_DGRAM
@@ -1039,6 +1223,7 @@ namespace xx::Epoll {
 
 	inline int Context::Ctl(int const& fd, uint32_t const& flags, int const& op) {
 		epoll_event event;
+		bzero(&event, sizeof(event));
 		event.data.fd = fd;
 		event.events = flags;
 		return epoll_ctl(efd, op, fd, &event);
@@ -1060,7 +1245,7 @@ namespace xx::Epoll {
 				xx::CoutN("epoll wait !h. fd = ", fd);
 				assert(h);
 			}
-			assert(h->fd == fd);
+			assert(!h->fd || h->fd == fd);
 			auto e = events[i].events;
 			h->OnEpollEvent(e);
 		}
@@ -1086,7 +1271,7 @@ namespace xx::Epoll {
 	inline void Context::UpdateKcps() {
 		if (kcps.size()) {
 			// 倒扫方便自杀交焕删除
-			for (int i = (int)kcps.size() - 1; i>=0;--i ) {
+			for (int i = (int)kcps.size() - 1; i >= 0; --i) {
 				kcps[i]->UpdateKcpLogic();
 			}
 		}
@@ -1112,7 +1297,7 @@ namespace xx::Epoll {
 		nowMS = xx::NowSteadyEpochMS();
 
 		// 开始循环
-		while (true) {
+		while (running) {
 
 			// 计算上个循环到现在经历的时长, 并累加到 pool
 			auto currTicks = xx::NowEpoch10m();
@@ -1152,6 +1337,7 @@ namespace xx::Epoll {
 
 		return 0;
 	}
+
 
 	template<typename L, typename ...Args>
 	inline Ref<L> Context::CreateTcpListener(int const& port, Args&&... args) {
@@ -1347,5 +1533,59 @@ namespace xx::Epoll {
 			fdMappings[fd] = p;
 		}
 		return p;
+	}
+
+	inline CommandHandler* Context::EnableCommandLine() {
+		// 已存在：直接短路返回
+		if (fdMappings[STDIN_FILENO]) return (CommandHandler*)fdMappings[STDIN_FILENO];
+
+		// 试将 fd 纳入 epoll 管理
+		if (-1 == Ctl(STDIN_FILENO, EPOLLIN)) return nullptr;
+
+		// 创建 stdin fd 的处理类并放入容器
+		return AddItem(xx::MakeU<CommandHandler>(), STDIN_FILENO);
+	}
+
+	template<typename T, typename ...Args>
+	Ref<T> Context::CreateINotifyHandler(char const* const& path, uint32_t const& eventMask) {
+		auto&& fd = inotify_init();
+		if (fd < 0) {
+			lastErrorNumber = -1;
+			return Ref<T>();
+		}
+		xx::ScopeGuard sg([&] { close(fd); });
+
+		// 设置非阻塞状态
+		if (-1 == fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK)) {
+			lastErrorNumber = -2;
+			return Ref<T>();
+		}
+
+		lastErrorNumber = inotify_add_watch(fd, path, eventMask);
+		if (lastErrorNumber < 0) return Ref<T>();
+
+		// fd 纳入 epoll 管理
+		if (-1 == Ctl(fd, EPOLLIN)) {
+			lastErrorNumber = -3;
+			return Ref<T>();
+		}
+
+		// 确保 return 时自动 close 并脱离 epoll 管理
+		sg.Set([&] { CloseDel(fd); });
+
+		// 试创建目标类实例
+		auto o_ = xx::TryMakeU<T>(std::forward<Args>(args)...);
+		if (!o_) {
+			lastErrorNumber = -4;
+			return Ref<T>();
+		}
+
+		// 撤销自动关闭行为并返回结果
+		sg.Cancel();
+
+		// 放入容器, 初始化并返回
+		auto o = AddItem(std::move(o_), fd);
+		o->Init();
+		return o;
 	}
 }

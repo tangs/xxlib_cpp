@@ -36,30 +36,45 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <IncludePath>../xxlib</IncludePath>
-	<MultiProcNumber>4</MultiProcNumber>
+    <MultiProcNumber>4</MultiProcNumber>
+    <AdditionalSourcesToCopyMapping>
+    </AdditionalSourcesToCopyMapping>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>../xxlib</IncludePath>
-	<MultiProcNumber>4</MultiProcNumber>
+    <MultiProcNumber>4</MultiProcNumber>
+    <AdditionalSourcesToCopyMapping>
+    </AdditionalSourcesToCopyMapping>
   </PropertyGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="service_cfg.json">
+      <DeploymentContent>true</DeploymentContent>
+    </None>
+  </ItemGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Link>
-      <LibraryDependencies>pthread;dl;uv;uuid;boost_context;sqlite3;mariadb;%(LibraryDependencies)</LibraryDependencies>
+      <LibraryDependencies>pthread;dl;uv;uuid;boost_context;sqlite3;mariadb;readline;%(LibraryDependencies)</LibraryDependencies>
     </Link>
     <ClCompile>
       <CppLanguageStandard>c++17</CppLanguageStandard>
     </ClCompile>
+    <RemotePostBuildEvent>
+      <Command>[ -e $(RemoteDeployDir)/bin ] || ln -dsf $(RemoteDeployDir)/$(TargetName)/bin $(RemoteDeployDir)/bin</Command>
+    </RemotePostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <Link>
-      <LibraryDependencies>pthread;dl;uv;uuid;boost_context;sqlite3;mariadb;%(LibraryDependencies)</LibraryDependencies>
+      <LibraryDependencies>pthread;dl;uv;uuid;boost_context;sqlite3;mariadb;readline;%(LibraryDependencies)</LibraryDependencies>
     </Link>
     <ClCompile>
       <CppLanguageStandard>c++17</CppLanguageStandard>
     </ClCompile>
+    <RemotePostBuildEvent>
+      <Command>[ -e $(RemoteDeployDir)/bin ] || ln -dsf $(RemoteDeployDir)/$(TargetName)/bin $(RemoteDeployDir)/bin</Command>
+    </RemotePostBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

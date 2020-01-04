@@ -13,7 +13,7 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{E0C094DD-A684-4590-8E8A-66CDD07905FE}</ProjectGuid>
     <Keyword>Linux</Keyword>
-    <RootNamespace>test_linux_8</RootNamespace>
+    <RootNamespace>test_linux_9</RootNamespace>
     <MinimumVisualStudioVersion>15.0</MinimumVisualStudioVersion>
     <ApplicationType>Linux</ApplicationType>
     <ApplicationTypeRevision>1.0</ApplicationTypeRevision>
